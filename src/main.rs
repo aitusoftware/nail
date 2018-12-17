@@ -9,5 +9,4 @@ fn main() {
             nail::process_files(files);
         }
     }
-    println!("Hello, world!");
 }
