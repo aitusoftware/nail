@@ -3,7 +3,7 @@ use std::fs::*;
 use std::io::Read;
 use std::io::Write;
 use std::ops::Rem;
-use std::time::Instant;
+use std::time::*;
 
 const DIGITS_IN_EPOCH_SECOND_TIMESTAMP: usize = 10;
 const DIGITS_IN_EPOCH_MILLISECOND_TIMESTAMP: usize = 13;
@@ -22,16 +22,24 @@ pub fn process_files(files: &[String]) {
             .write(true)
             .open(target_file_name)
             .unwrap();
-        match file.read(&mut buffer).ok() {
-            Some(read_length) => {
-                if read_length != 0 {
-                    let replacement = replace_epoch_timestamps_in_buffer(&buffer, read_length, read_length < buffer.len());
-                    let slice = replacement.data.as_slice();
-                    target_file.write(slice).expect("Failed to write");
+        loop {
+            match file.read(&mut buffer).ok() {
+                Some(read_length) => {
+                    if read_length != 0 {
+                        let replacement = replace_epoch_timestamps_in_buffer(
+                            &buffer,
+                            read_length,
+                            read_length < buffer.len(),
+                        );
+                        let slice = replacement.data.as_slice();
+                        target_file.write(slice).expect("Failed to write");
+                    } else {
+                        break;
+                    }
                 }
-            }
-            _ => panic!("Error reading from input file"),
-        };
+                _ => panic!("Error reading from input file"),
+            };
+        }
 
         target_file.flush().expect("Error flushing target file")
     }
@@ -46,7 +54,11 @@ pub fn replace_epoch_timestamps(input: &[u8], end_of_input: bool) -> Replacement
     replace_epoch_timestamps_in_buffer(input, input.len(), end_of_input)
 }
 
-pub fn replace_epoch_timestamps_in_buffer(input: &[u8], input_length: usize, end_of_input: bool) -> ReplacementResult {
+pub fn replace_epoch_timestamps_in_buffer(
+    input: &[u8],
+    input_length: usize,
+    end_of_input: bool,
+) -> ReplacementResult {
     let mut replaced: Vec<u8> = Vec::new();
     let mut integer_accumulator = Vec::new();
     for index in 0..input_length {
@@ -253,8 +265,14 @@ mod tests {
         let name2: String = "/tmp/".to_string() + &timestamp.to_string();
         let mut test_data_file = open_options.open(&name).unwrap();
         let test_data = "abcdef\nsome1530216070timestamp\nfoo\nprefix1530216070317suffix\nbar\n\n";
-        let expected = "abcdef\nsome[2018-06-28 20:01:10 UTC]timestamp\nfoo\nprefix[2018-06-28 20:01:10.317 UTC]suffix\nbar\n\n";
-        test_data_file.write(test_data.as_bytes()).expect("Failed to write file");
+        let mut expected: String = String::new();
+
+        for _ in 0..100 {
+            test_data_file
+                .write(test_data.as_bytes())
+                .expect("Failed to write file");
+            expected.push_str(&"abcdef\nsome[2018-06-28 20:01:10 UTC]timestamp\nfoo\nprefix[2018-06-28 20:01:10.317 UTC]suffix\nbar\n\n".to_string());
+        }
         test_data_file.flush().expect("Failed to flush file");
 
         process_files(&[name]);
@@ -265,11 +283,11 @@ mod tests {
         let mut open_options = OpenOptions::new();
         open_options.read(true);
         let mut input_file = open_options.open(file_name).unwrap();
-        let mut buffer = [0; BUFFER_SIZE];
-        let _bytes_reader = input_file.read(&mut buffer).unwrap();
-        let mut truncated_buffer = Vec::new();
-        append_bytes(&buffer, &mut truncated_buffer);
-        compare_bytes_len(expected, &truncated_buffer.as_slice(), expected.len());
+        let mut buffer = Vec::new();
+        input_file
+            .read_to_end(&mut buffer)
+            .expect("Failed to read file");
+        compare_bytes_len(expected, &buffer.as_slice(), expected.len());
     }
 
     fn compare_bytes(a: &[u8], b: &[u8]) {
