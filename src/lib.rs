@@ -13,7 +13,7 @@ const BUFFER_SIZE: usize = 1024;
 pub fn process_files(files: &[String]) {
     let mut options = OpenOptions::new();
     options.read(true);
-    let mut buffer = [0; BUFFER_SIZE];
+    let mut read_buffer = [0; BUFFER_SIZE];
     for file_name in files {
         let target_file_name = file_name.to_string() + &".depoch".to_string();
         let mut file = options.open(file_name).unwrap();
@@ -22,17 +22,33 @@ pub fn process_files(files: &[String]) {
             .write(true)
             .open(target_file_name)
             .unwrap();
+        let mut data_buffer = Vec::new();
+        let mut tmp_buffer = Vec::new();
         loop {
-            match file.read(&mut buffer).ok() {
+            match file.read(&mut read_buffer).ok() {
                 Some(read_length) => {
                     if read_length != 0 {
+                        let initial_length = data_buffer.len();
+                        data_buffer.extend_from_slice(&read_buffer);
                         let replacement = replace_epoch_timestamps_in_buffer(
-                            &buffer,
-                            read_length,
-                            read_length < buffer.len(),
+                            &data_buffer,
+                            read_length + initial_length,
+                            read_length < read_buffer.len(),
                         );
                         let slice = replacement.data.as_slice();
-                        target_file.write(slice).expect("Failed to write");
+                        target_file.write_all(slice).expect("Failed to write");
+
+                        if replacement.left_over_data != 0 {
+                            for _ in 0..replacement.left_over_data {
+                                tmp_buffer.push(data_buffer.pop().expect("Invalid state"))
+                            }
+                            tmp_buffer.reverse();
+                            data_buffer.clear();
+                            data_buffer.extend(&tmp_buffer);
+                        } else {
+                            data_buffer.clear();
+                        }
+
                     } else {
                         break;
                     }
@@ -50,12 +66,12 @@ pub struct ReplacementResult {
     pub left_over_data: u64,
 }
 
-pub fn replace_epoch_timestamps(input: &[u8], end_of_input: bool) -> ReplacementResult {
+pub fn replace_epoch_timestamps(input: &Vec<u8>, end_of_input: bool) -> ReplacementResult {
     replace_epoch_timestamps_in_buffer(input, input.len(), end_of_input)
 }
 
 pub fn replace_epoch_timestamps_in_buffer(
-    input: &[u8],
+    input: &Vec<u8>,
     input_length: usize,
     end_of_input: bool,
 ) -> ReplacementResult {
@@ -89,7 +105,7 @@ pub fn replace_epoch_timestamps_in_buffer(
         }
     } else {
         ReplacementResult {
-            data: Vec::from(input),
+            data: input.to_vec(),
             left_over_data: integer_accumulator.len() as u64,
         }
     }
@@ -149,7 +165,9 @@ mod tests {
     fn replace_valid_timestamp_with_millisecond_precision() {
         let input = "1530216070317a";
         let expected = "[2018-06-28 20:01:10.317 UTC]a";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -159,7 +177,9 @@ mod tests {
     fn replace_valid_timestamp_with_second_precision() {
         let input = "1530216070a";
         let expected = "[2018-06-28 20:01:10 UTC]a";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -169,7 +189,9 @@ mod tests {
     fn do_not_replace_millisecond_timestamp_at_end_of_input() {
         let input = "1530216070317";
         let expected = "1530216070317";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(13, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -179,7 +201,9 @@ mod tests {
     fn do_not_replace_second_timestamp_at_end_of_input() {
         let input = "1530216070";
         let expected = "1530216070";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(10, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -189,7 +213,9 @@ mod tests {
     fn replace_millisecond_timestamp_at_end_of_input() {
         let input = "1530216070317";
         let expected = "[2018-06-28 20:01:10.317 UTC]";
-        let response = replace_epoch_timestamps(input.as_bytes(), true);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, true);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -199,7 +225,9 @@ mod tests {
     fn replace_second_timestamp_at_end_of_input() {
         let input = "1530216070";
         let expected = "[2018-06-28 20:01:10 UTC]";
-        let response = replace_epoch_timestamps(input.as_bytes(), true);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, true);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -209,7 +237,9 @@ mod tests {
     fn replace_valid_timestamp_with_millisecond_precision_in_place() {
         let input = "prefix1530216070317suffix";
         let expected = "prefix[2018-06-28 20:01:10.317 UTC]suffix";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -219,7 +249,9 @@ mod tests {
     fn replace_valid_timestamp_with_second_precision_in_place() {
         let input = "prefix1530216070suffix";
         let expected = "prefix[2018-06-28 20:01:10 UTC]suffix";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -229,7 +261,9 @@ mod tests {
     fn replace_multiple_timestamp_with_second_precision() {
         let input = "prefix1530216070middle1530216070suffix";
         let expected = "prefix[2018-06-28 20:01:10 UTC]middle[2018-06-28 20:01:10 UTC]suffix";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -240,7 +274,9 @@ mod tests {
         let input = "prefix1530216070317middle1530216070317suffix";
         let expected =
             "prefix[2018-06-28 20:01:10.317 UTC]middle[2018-06-28 20:01:10.317 UTC]suffix";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(0, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -250,7 +286,9 @@ mod tests {
     fn indicate_trailing_numeric_chars() {
         let input = "prefix15302160";
         let expected = "prefix";
-        let response = replace_epoch_timestamps(input.as_bytes(), false);
+        let mut input_buffer = Vec::new();
+        input_buffer.extend_from_slice(&input.as_bytes());
+        let response = replace_epoch_timestamps(&input_buffer, false);
 
         assert_eq!(8, response.left_over_data);
         compare_bytes(expected.as_bytes(), &response.data);
@@ -273,6 +311,30 @@ mod tests {
                 .expect("Failed to write file");
             expected.push_str(&"abcdef\nsome[2018-06-28 20:01:10 UTC]timestamp\nfoo\nprefix[2018-06-28 20:01:10.317 UTC]suffix\nbar\n\n".to_string());
         }
+        test_data_file.flush().expect("Failed to flush file");
+
+        process_files(&[name]);
+        assert_file_content(name2 + &".depoch".to_string(), expected.as_bytes())
+    }
+
+    #[test]
+    fn replace_in_file_over_buffer_boundary() {
+        let mut open_options = OpenOptions::new();
+        open_options.write(true).create_new(true).truncate(true);
+        let timestamp = format!("{:?}", Instant::now());
+        let name: String = "/tmp/".to_string() + &timestamp.to_string();
+        let name2: String = "/tmp/".to_string() + &timestamp.to_string();
+        let mut test_data_file = open_options.open(&name).unwrap();
+        let mut expected: String = String::new();
+
+        for _ in 0..BUFFER_SIZE - 4 {
+            test_data_file
+                .write("a".as_bytes())
+                .expect("Failed to write file");
+            expected.push_str(&"a".to_string());
+        }
+        test_data_file.write("1530216070317".as_bytes()).expect("Failed to write file");
+        expected.push_str(&"[2018-06-28 20:01:10.317 UTC]".to_string());
         test_data_file.flush().expect("Failed to flush file");
 
         process_files(&[name]);
