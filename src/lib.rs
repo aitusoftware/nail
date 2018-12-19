@@ -9,6 +9,7 @@ const DIGITS_IN_EPOCH_SECOND_TIMESTAMP: usize = 10;
 const DIGITS_IN_EPOCH_MILLISECOND_TIMESTAMP: usize = 13;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const BUFFER_SIZE: usize = 1024;
+const ASCII_ZERO: u8 = 48;
 
 pub fn process_files(files: &[String]) {
     let mut options = OpenOptions::new();
@@ -25,36 +26,33 @@ pub fn process_files(files: &[String]) {
         let mut data_buffer = Vec::new();
         let mut tmp_buffer = Vec::new();
         loop {
-            match file.read(&mut read_buffer).ok() {
-                Some(read_length) => {
-                    if read_length != 0 {
-                        let initial_length = data_buffer.len();
-                        data_buffer.extend_from_slice(&read_buffer);
-                        let replacement = replace_epoch_timestamps_in_buffer(
-                            &data_buffer,
-                            read_length + initial_length,
-                            read_length < read_buffer.len(),
-                        );
-                        let slice = replacement.data.as_slice();
-                        target_file.write_all(slice).expect("Failed to write");
+            let read_length = file
+                .read(&mut read_buffer)
+                .expect("Error reading from input file");
+            if read_length != 0 {
+                let initial_length = data_buffer.len();
+                data_buffer.extend_from_slice(&read_buffer);
+                let replacement = replace_epoch_timestamps_in_buffer(
+                    &data_buffer,
+                    read_length + initial_length,
+                    read_length < read_buffer.len(),
+                );
+                let slice = replacement.data.as_slice();
+                target_file.write_all(slice).expect("Failed to write");
 
-                        if replacement.left_over_data != 0 {
-                            for _ in 0..replacement.left_over_data {
-                                tmp_buffer.push(data_buffer.pop().expect("Invalid state"))
-                            }
-                            tmp_buffer.reverse();
-                            data_buffer.clear();
-                            data_buffer.extend(&tmp_buffer);
-                        } else {
-                            data_buffer.clear();
-                        }
-
-                    } else {
-                        break;
+                if replacement.left_over_data != 0 {
+                    for _ in 0..replacement.left_over_data {
+                        tmp_buffer.push(data_buffer.pop().expect("Invalid state"))
                     }
+                    tmp_buffer.reverse();
+                    data_buffer.clear();
+                    data_buffer.extend(&tmp_buffer);
+                } else {
+                    data_buffer.clear();
                 }
-                _ => panic!("Error reading from input file"),
-            };
+            } else {
+                break;
+            }
         }
 
         target_file.flush().expect("Error flushing target file")
@@ -81,21 +79,12 @@ pub fn replace_epoch_timestamps_in_buffer(
         if input[index].is_ascii_digit() {
             integer_accumulator.push(input[index]);
         } else {
-            if is_epoch_millisecond_timestamp(&integer_accumulator) {
-                append_epoch_timestamp(&mut integer_accumulator, &mut replaced)
-            } else if is_epoch_second_timestamp(&integer_accumulator) {
-                append_epoch_timestamp(&mut integer_accumulator, &mut replaced)
-            }
-
+            process_possible_timestamp(&mut integer_accumulator, &mut replaced);
             replaced.push(input[index]);
         }
     }
     if end_of_input {
-        if is_epoch_millisecond_timestamp(&integer_accumulator) {
-            append_epoch_timestamp(&mut integer_accumulator, &mut replaced)
-        } else if is_epoch_second_timestamp(&integer_accumulator) {
-            append_epoch_timestamp(&mut integer_accumulator, &mut replaced)
-        }
+        process_possible_timestamp(&mut integer_accumulator, &mut replaced);
     }
 
     if replaced.len() != 0 {
@@ -111,12 +100,12 @@ pub fn replace_epoch_timestamps_in_buffer(
     }
 }
 
-fn is_epoch_millisecond_timestamp(input: &Vec<u8>) -> bool {
-    return input.len() == DIGITS_IN_EPOCH_MILLISECOND_TIMESTAMP;
-}
-
-fn is_epoch_second_timestamp(input: &Vec<u8>) -> bool {
-    return input.len() == DIGITS_IN_EPOCH_SECOND_TIMESTAMP;
+fn process_possible_timestamp(integer_accumulator: &mut Vec<u8>, replaced: &mut Vec<u8>) {
+    if is_epoch_millisecond_timestamp(&integer_accumulator)
+        || is_epoch_second_timestamp(&integer_accumulator)
+    {
+        append_epoch_timestamp(integer_accumulator, replaced)
+    }
 }
 
 fn append_epoch_timestamp(integer_accumulator: &mut Vec<u8>, append_buffer: &mut Vec<u8>) {
@@ -126,7 +115,7 @@ fn append_epoch_timestamp(integer_accumulator: &mut Vec<u8>, append_buffer: &mut
     loop {
         if let Some(next) = integer_accumulator.pop() {
             timestamp *= 10;
-            timestamp += (next - 48 as u8) as i64
+            timestamp += (next - ASCII_ZERO) as i64
         } else {
             break;
         }
@@ -147,14 +136,16 @@ fn append_epoch_timestamp(integer_accumulator: &mut Vec<u8>, append_buffer: &mut
 
     let date_time = Utc.timestamp(seconds, nanos);
     let timestamp_str = format!("[{}]", date_time);
-    append_bytes(timestamp_str.as_bytes(), append_buffer);
+    append_buffer.extend_from_slice(timestamp_str.as_bytes());
     integer_accumulator.clear()
 }
 
-fn append_bytes(input: &[u8], output: &mut Vec<u8>) {
-    for index in 0..input.len() {
-        output.push(input[index]);
-    }
+fn is_epoch_millisecond_timestamp(input: &Vec<u8>) -> bool {
+    return input.len() == DIGITS_IN_EPOCH_MILLISECOND_TIMESTAMP;
+}
+
+fn is_epoch_second_timestamp(input: &Vec<u8>) -> bool {
+    return input.len() == DIGITS_IN_EPOCH_SECOND_TIMESTAMP;
 }
 
 #[cfg(test)]
@@ -333,7 +324,9 @@ mod tests {
                 .expect("Failed to write file");
             expected.push_str(&"a".to_string());
         }
-        test_data_file.write("1530216070317".as_bytes()).expect("Failed to write file");
+        test_data_file
+            .write("1530216070317".as_bytes())
+            .expect("Failed to write file");
         expected.push_str(&"[2018-06-28 20:01:10.317 UTC]".to_string());
         test_data_file.flush().expect("Failed to flush file");
 
