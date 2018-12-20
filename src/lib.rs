@@ -23,40 +23,53 @@ pub fn process_files(files: &[String]) {
             .write(true)
             .open(target_file_name)
             .unwrap();
-        let mut data_buffer = Vec::new();
-        let mut tmp_buffer = Vec::new();
-        loop {
-            let read_length = file
-                .read(&mut read_buffer)
-                .expect("Error reading from input file");
-            if read_length != 0 {
-                let initial_length = data_buffer.len();
-                data_buffer.extend_from_slice(&read_buffer);
-                let replacement = replace_epoch_timestamps_in_buffer(
-                    &data_buffer,
-                    read_length + initial_length,
-                    read_length < read_buffer.len(),
-                );
-                let slice = replacement.data.as_slice();
-                target_file.write_all(slice).expect("Failed to write");
-
-                if replacement.left_over_data != 0 {
-                    for _ in 0..replacement.left_over_data {
-                        tmp_buffer.push(data_buffer.pop().expect("Invalid state"))
-                    }
-                    tmp_buffer.reverse();
-                    data_buffer.clear();
-                    data_buffer.extend(&tmp_buffer);
-                } else {
-                    data_buffer.clear();
-                }
-            } else {
-                break;
-            }
-        }
-
-        target_file.flush().expect("Error flushing target file")
+        process_input(&mut file, &mut target_file, &mut read_buffer)
     }
+}
+
+pub fn process_stdin() {
+    let stdin = std::io::stdin();
+    let mut stdin_lock = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut stdout_lock = stdout.lock();
+    let mut read_buffer = [0; BUFFER_SIZE];
+
+    process_input(&mut stdin_lock, &mut stdout_lock, &mut read_buffer)
+}
+
+fn process_input(input: &mut Read, output: &mut Write, read_buffer: &mut [u8]) {
+    let mut data_buffer = Vec::new();
+    let mut tmp_buffer = Vec::new();
+    loop {
+        let read_length = input
+            .read(read_buffer)
+            .expect("Error reading from input file");
+        if read_length != 0 {
+            let initial_length = data_buffer.len();
+            data_buffer.extend_from_slice(&read_buffer);
+            let replacement = replace_epoch_timestamps_in_buffer(
+                &data_buffer,
+                read_length + initial_length,
+                read_length < read_buffer.len(),
+            );
+            let slice = replacement.data.as_slice();
+            output.write_all(slice).expect("Failed to write");
+
+            if replacement.left_over_data != 0 {
+                for _ in 0..replacement.left_over_data {
+                    tmp_buffer.push(data_buffer.pop().expect("Invalid state"))
+                }
+                tmp_buffer.reverse();
+                data_buffer.clear();
+                data_buffer.extend(&tmp_buffer);
+            } else {
+                data_buffer.clear();
+            }
+        } else {
+            break;
+        }
+    }
+    output.flush().expect("Error flushing output")
 }
 
 pub struct ReplacementResult {

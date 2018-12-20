@@ -8,5 +8,7 @@ fn main() {
         if let Some((_program, files)) = args.split_first() {
             nail::process_files(files);
         }
+    } else {
+        nail::process_stdin();
     }
 }
