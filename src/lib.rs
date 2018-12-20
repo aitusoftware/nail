@@ -10,6 +10,87 @@ const DIGITS_IN_EPOCH_MILLISECOND_TIMESTAMP: usize = 13;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const BUFFER_SIZE: usize = 1024;
 const ASCII_ZERO: u8 = 48;
+const ASCII_LOWERCASE_A: u8 = 97;
+const ASCII_UPPERCASE_A: u8 = 65;
+const ASCII_LOWERCASE_F: u8 = 102;
+const ASCII_UPPERCASE_F: u8 = 70;
+const ASCII_LOWERCASE_X: u8 = 120;
+
+
+pub fn enhex(tokens: &[String]) {
+    for token in tokens {
+        let mut tmp = Vec::new();
+        tmp.extend_from_slice(token.as_bytes());
+        // TODO validate that all chars are ascii_digits
+        println!("{}", to_hex_chars(ascii_to_integer(&mut tmp)))
+    }
+}
+
+pub fn dehex(tokens: &[String]) {
+    for token in tokens {
+        // TODO validate that all chars are hex_ascii_digits
+        println!("{}", to_decimal_chars(token))
+    }
+}
+
+fn to_hex_chars(input: u64) -> String {
+    format!("0x{:x}", input)
+}
+
+fn to_decimal_chars(input: &String) -> String {
+    let mut value: u64 = 0;
+    let chars = input.as_bytes();
+    let start = if has_hex_indicator(chars) { 2 } else { 0 };
+    for i in start..chars.len() {
+        value *= 16;
+        let index = i;
+        let hex_char = chars[index];
+        if hex_char >= ASCII_UPPERCASE_A && hex_char <= ASCII_UPPERCASE_F {
+            let v = 10 + (hex_char - ASCII_UPPERCASE_A) as u64;
+            value += v
+        } else if hex_char >= ASCII_LOWERCASE_A && hex_char <= ASCII_LOWERCASE_F {
+            let v = 10 + (hex_char - ASCII_LOWERCASE_A) as u64;
+            value += v
+        } else {
+            let v = (hex_char - ASCII_ZERO) as u64;
+            value += v
+        }
+    }
+    return format!("{}", value)
+}
+
+fn has_hex_indicator(chars: &[u8]) -> bool {
+    chars.len() > 1 && chars[0] == ASCII_ZERO && chars[1] == ASCII_LOWERCASE_X
+}
+
+fn hex_ascii_to_integer(integer_accumulator: &mut Vec<u8>) -> u64 {
+    let mut value: u64 = 0;
+    integer_accumulator.reverse();
+    loop {
+        if let Some(next) = integer_accumulator.pop() {
+            value *= 10;
+            value += (next - ASCII_ZERO) as u64
+        } else {
+            break;
+        }
+    }
+    value
+}
+
+fn ascii_to_integer(integer_accumulator: &mut Vec<u8>) -> u64 {
+    let mut value: u64 = 0;
+    integer_accumulator.reverse();
+    loop {
+        if let Some(next) = integer_accumulator.pop() {
+            value *= 10;
+            value += (next - ASCII_ZERO) as u64
+        } else {
+            break;
+        }
+    }
+    value
+}
+
 
 pub fn process_files(files: &[String]) {
     let mut options = OpenOptions::new();
@@ -77,11 +158,11 @@ pub struct ReplacementResult {
     pub left_over_data: u64,
 }
 
-pub fn replace_epoch_timestamps(input: &Vec<u8>, end_of_input: bool) -> ReplacementResult {
+fn replace_epoch_timestamps(input: &Vec<u8>, end_of_input: bool) -> ReplacementResult {
     replace_epoch_timestamps_in_buffer(input, input.len(), end_of_input)
 }
 
-pub fn replace_epoch_timestamps_in_buffer(
+fn replace_epoch_timestamps_in_buffer(
     input: &Vec<u8>,
     input_length: usize,
     end_of_input: bool,
@@ -122,17 +203,8 @@ fn process_possible_timestamp(integer_accumulator: &mut Vec<u8>, replaced: &mut 
 }
 
 fn append_epoch_timestamp(integer_accumulator: &mut Vec<u8>, append_buffer: &mut Vec<u8>) {
-    let mut timestamp: i64 = 0;
     let digit_count = integer_accumulator.len();
-    integer_accumulator.reverse();
-    loop {
-        if let Some(next) = integer_accumulator.pop() {
-            timestamp *= 10;
-            timestamp += (next - ASCII_ZERO) as i64
-        } else {
-            break;
-        }
-    }
+    let timestamp: i64 = ascii_to_integer(integer_accumulator) as i64;
 
     let nanos: u32 = match digit_count {
         DIGITS_IN_EPOCH_MILLISECOND_TIMESTAMP => {
@@ -164,6 +236,27 @@ fn is_epoch_second_timestamp(input: &Vec<u8>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn convert_to_hex() {
+        assert_eq!("0x9fbf1", to_hex_chars(654321))
+    }
+
+    #[test]
+    fn convert_from_hex() {
+        assert_eq!("654321", to_decimal_chars(&"9fbf1".to_string()))
+    }
+
+    #[test]
+    fn convert_from_hex_with_leading_zero() {
+        assert_eq!("654321", to_decimal_chars(&"09fbf1".to_string()))
+    }
+
+    #[test]
+    fn convert_from_hex_with_leading_zero_and_hex_indicator() {
+        assert_eq!("654321", to_decimal_chars(&"0x09fbf1".to_string()))
+    }
+
 
     #[test]
     fn replace_valid_timestamp_with_millisecond_precision() {
