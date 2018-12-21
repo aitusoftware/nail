@@ -248,6 +248,11 @@ mod tests {
     }
 
     #[test]
+    fn convert_from_hex_uppercase() {
+        assert_eq!("654321", to_decimal_chars(&"09FBF1".to_string()))
+    }
+
+    #[test]
     fn convert_from_hex_with_leading_zero() {
         assert_eq!("654321", to_decimal_chars(&"09fbf1".to_string()))
     }
